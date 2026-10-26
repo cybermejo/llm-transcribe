@@ -63,9 +63,10 @@ class OutputHandler:
         for result in sorted_results:
             for line in result.lines:
                 # Timestamps are already in seconds as float
-                if line.timestamp > last_timestamp_seconds:
+                if line.timestamp is None or line.timestamp > last_timestamp_seconds:
                     all_lines.append(str(line))
-                    last_timestamp_seconds = line.timestamp
+                    if line.timestamp is not None:
+                        last_timestamp_seconds = line.timestamp
         
         return all_lines
     

@@ -39,9 +39,10 @@ class _CredentialRedactionFilter(logging.Filter):
         try:
             message = record.getMessage()
             if record.exc_info:
-                formatter = self.formatter or logging.Formatter()
+                # Filters do not have handler formatter state; use a local
+                # formatter to retain useful traceback details safely.
                 message = "\n".join(
-                    (message, formatter.formatException(record.exc_info))
+                    (message, logging.Formatter().formatException(record.exc_info))
                 )
                 record.exc_info = None
                 record.exc_text = None

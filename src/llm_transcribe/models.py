@@ -66,22 +66,30 @@ class ChunkData(BaseModel):
 class TranscriptionLine(BaseModel):
     """A single line of transcription."""
     
-    timestamp: float = Field(description="Timestamp in seconds from start of audio")
-    speaker: str = Field(description="Speaker name or identifier")
+    timestamp: Optional[float] = Field(default=None, description="Timestamp in seconds from start of audio, when provided")
+    speaker: Optional[str] = Field(default=None, description="Speaker name or identifier, when provided")
     text: str = Field(description="Transcribed text")
     
     @validator('timestamp')
     def validate_timestamp(cls, v):
+        if v is None:
+            return v
         if v < 0:
             raise ValueError("Timestamp must be non-negative")
         return v
     
     @property
-    def formatted_timestamp(self) -> str:
-        """Get timestamp formatted as [HH:MM:SS]."""
-        return format_timestamp(self.timestamp)
+    def formatted_timestamp(self) -> Optional[str]:
+        """Get timestamp formatted as [HH:MM:SS], if one is available."""
+        return format_timestamp(self.timestamp) if self.timestamp is not None else None
     
     def __str__(self) -> str:
+        if self.timestamp is None and self.speaker is None:
+            return self.text
+        if self.timestamp is None:
+            return f"{self.speaker}: {self.text}"
+        if self.speaker is None:
+            return f"{self.formatted_timestamp} {self.text}"
         return f"{self.formatted_timestamp} {self.speaker}: {self.text}"
 
 
@@ -117,7 +125,7 @@ class TranscriptionResult(BaseModel):
         # Find lines from the last minute (timestamps are already in seconds)
         context_lines = []
         for line in self.lines:
-            if line.timestamp >= last_minute_start_seconds:
+            if line.timestamp is not None and line.timestamp >= last_minute_start_seconds:
                 context_lines.append(line)
         
         return "\n".join(str(line) for line in context_lines)

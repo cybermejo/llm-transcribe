@@ -1,6 +1,8 @@
 """CLI wiring tests for custom provider profiles."""
 
+import logging
 import struct
+import sys
 import wave
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -221,9 +223,40 @@ def test_test_setup_error_redacts_api_key(providers_file, audio_file, monkeypatc
     assert "provider setup failed" in result.output
 
 
-def test_logs_redact_api_key(providers_file, audio_file, monkeypatch, caplog):
-    import logging
+def test_exception_log_keeps_useful_message_and_redacts_key_and_base():
+    from src.llm_transcribe.cli import _CredentialRedactionFilter
 
+    redactor = _CredentialRedactionFilter()
+    redactor.secrets = ("private-key", "https://private.example/v1")
+    logger = logging.getLogger("llm_transcribe.redaction-regression")
+    logger.addFilter(redactor)
+    record = None
+    try:
+        try:
+            raise RuntimeError("request to https://private.example/v1 rejected key private-key")
+        except RuntimeError:
+            record = logger.makeRecord(
+                logger.name,
+                logging.ERROR,
+                __file__,
+                1,
+                "Provider request failed",
+                (),
+                sys.exc_info(),
+            )
+            assert redactor.filter(record)
+    finally:
+        logger.removeFilter(redactor)
+
+    assert record is not None
+    message = record.getMessage()
+    assert "Provider request failed" in message
+    assert "request to [redacted] rejected key [redacted]" in message
+    assert "private-key" not in message
+    assert "https://private.example/v1" not in message
+
+
+def test_logs_redact_api_key(providers_file, audio_file, monkeypatch, caplog):
     monkeypatch.setenv("LLM_TRANSCRIBE_PROVIDERS_FILE", str(providers_file))
     with patch("src.llm_transcribe.cli.TranscriptionEngine") as engine:
         def emit_sensitive_logs():

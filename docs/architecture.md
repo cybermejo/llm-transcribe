@@ -37,6 +37,8 @@ LLM Transcribe is a Python CLI tool that transcribes audio files using Large Lan
 - **Resolution and request flow**: `providers.py` loads and resolves profile, CLI, and environment values; the CLI passes the resolved settings to the transcription engine; the engine creates the `LLMClient`; and `LLMClient` calls LiteLLM. For a custom `api_base`, it adds the `openai/` prefix to bare model names that contain neither `/` nor `:`. Model names that already have a provider prefix are passed through unchanged.
 - **Reasoning effort**: `--reasoning-effort` (or `LLM_TRANSCRIBE_REASONING_EFFORT`) is sent to LiteLLM only when set. The client does not force a reasoning-effort value, so models that reject that parameter are not sent one by default.
 - **Cost guard**: If LiteLLM cannot look up a model's price, the client records the request, reports total cost as `n/a`, and logs one warning. It does not fail the transcription because the price is unknown.
+- **Response fallback**: If a transcription response contains no parseable timestamped speaker lines, the client preserves its non-empty plain text as a line without a timestamp or speaker. This avoids inventing timing or speaker attribution while ensuring recognized speech reaches the output file.
+- **Connectivity probe**: A successful API response counts as connected even when its message content is empty. Transport, authentication, and model errors still fail the probe.
 
 ### 2. Data Models (`models.py`)
 - **Responsibility**: Pydantic models for all data structures

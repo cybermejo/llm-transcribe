@@ -9,6 +9,54 @@ import pytest
 from src.llm_transcribe.llm_client import LLMClient
 
 
+def test_plain_text_transcription_is_preserved_without_invented_metadata() -> None:
+    client = LLMClient(model="gemini-3.5-transcribe")
+    response_text = "Good morning. My name is Alex. The meeting begins at 9:00."
+
+    lines = client.parse_transcription_response(response_text, chunk_start_seconds=120.0)
+
+    assert len(lines) == 1
+    assert lines[0].text == response_text
+    assert lines[0].timestamp is None
+    assert lines[0].speaker is None
+    assert str(lines[0]) == response_text
+
+
+def test_multiline_plain_text_is_preserved_as_one_unattributed_transcript() -> None:
+    client = LLMClient(model="gemini-3.5-transcribe")
+    response_text = "Good morning.\nThe meeting begins at nine."
+
+    lines = client.parse_transcription_response(response_text, chunk_start_seconds=120.0)
+
+    assert len(lines) == 1
+    assert lines[0].text == response_text
+    assert str(lines[0]) == response_text
+    assert lines[0].timestamp is None
+    assert lines[0].speaker is None
+
+
+def test_connection_test_accepts_empty_response_as_reachable() -> None:
+    client = LLMClient(model="m1", api_base="https://private.example/v1", api_key="private-key")
+    with (
+        patch("src.llm_transcribe.llm_client.completion") as mock_completion,
+        patch("src.llm_transcribe.llm_client.completion_cost", return_value=0.0),
+    ):
+        mock_completion.return_value = _fake_response("")
+
+        assert client.test_connection() is True
+
+    assert client.request_count == 1
+
+
+def test_connection_test_still_rejects_api_errors() -> None:
+    client = LLMClient(model="m1")
+    with patch(
+        "src.llm_transcribe.llm_client.completion",
+        side_effect=RuntimeError("unauthorized"),
+    ):
+        assert client.test_connection() is False
+
+
 def test_effective_model_prefixes_bare_model_when_custom() -> None:
     client = LLMClient(
         model="gemini-3.5-transcribe",

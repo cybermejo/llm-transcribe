@@ -83,6 +83,8 @@ The audio path is still required and must point to an existing file; the check i
 
 Models missing from LiteLLM's price table show `n/a` in the cost summary. Request counts are still reported.
 
+Some transcription endpoints return recognizable speech as plain text instead of the requested timestamped speaker lines. When the entire response has no parseable timestamped lines, the tool preserves it as one transcript line with no timestamp or speaker label. This fallback does not infer timing or identify speakers. The plain text is written to the normal transcript output rather than being discarded or reported as an empty successful transcription.
+
 ## How it Works
 
 1. **Audio Processing**: Audio file is split into 10-minute chunks with 1-minute overlap using a sliding-window approach.

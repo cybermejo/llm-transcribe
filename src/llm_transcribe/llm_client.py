@@ -243,7 +243,9 @@ Start your output by repeating the context lines exactly, then add new transcrip
         # Replace all timestamps [HH:MM:SS] with relative versions
         return re.sub(r'\[(\d{2}:\d{2}:\d{2})\]', convert_timestamp, context)
     
-    def _make_llm_call_with_retry(self, messages: List[dict], **kwargs) -> str:
+    def _make_llm_call_with_retry(
+        self, messages: List[dict], *, allow_empty_response: bool = False, **kwargs
+    ) -> str:
         """Make LLM API call with retry logic.
         
         Args:
@@ -286,10 +288,10 @@ Start your output by repeating the context lines exactly, then add new transcrip
                 self.total_cost += cost
 
             # Check for empty response
-            response_text = response.choices[0].message.content
-            if not response_text or not response_text.strip():
+            response_text = response.choices[0].message.content or ""
+            if not allow_empty_response and not response_text.strip():
                 raise ValueError("Empty response from LLM")
-            
+
             return response_text
         
         try:
@@ -383,7 +385,7 @@ Start your output by repeating the context lines exactly, then add new transcrip
             line = line.strip()
             if not line:
                 continue
-            
+
             # Try to parse timestamp and speaker
             # Expected format: [MM:SS] or [M:SS] Speaker: text
             match = re.match(r'\[(\d{1,2}:\d{2})\]\s*([^:]+):\s*(.+)', line)
@@ -427,7 +429,17 @@ Start your output by repeating the context lines exactly, then add new transcrip
                         speaker=speaker,
                         text=text
                     ))
-        
+        # If the response has no parseable timestamped lines, keep the entire
+        # plain-text response without inventing timing or speaker attribution.
+        if not lines and response_text.strip():
+            lines.append(
+                TranscriptionLine(
+                    timestamp=None,
+                    speaker=None,
+                    text=response_text.strip(),
+                )
+            )
+
         return lines
     
     def transcribe_chunk(self, chunk: ChunkData, audio_bytes: bytes, context: Optional[str] = None, meeting_context: Optional[str] = None) -> TranscriptionResult:
@@ -518,6 +530,7 @@ Start your output by repeating the context lines exactly, then add new transcrip
                 test_messages,
                 max_tokens=10,
                 temperature=0,
+                allow_empty_response=True,
             ).strip()
             logger.debug(f"Test LLM Response: {response_text}")
             logger.info(f"Connection test successful: {response_text}")
