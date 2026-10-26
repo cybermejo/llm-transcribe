@@ -24,12 +24,15 @@ class LLMClient:
         model: str = "gemini-2.5-flash",
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
+        reasoning_effort: str | None = None,
     ):
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
+        self.reasoning_effort = reasoning_effort
         self.total_cost = 0.0
         self.request_count = 0
+        self.cost_known = True
         
         # Define which exceptions should be retried
         self.retryable_exceptions = (
@@ -264,12 +267,23 @@ Start your output by repeating the context lines exactly, then add new transcrip
                 completion_kwargs["api_base"] = self.api_base
             if self.api_key is not None:
                 completion_kwargs["api_key"] = self.api_key
+            if self.reasoning_effort is not None:
+                completion_kwargs["reasoning_effort"] = self.reasoning_effort
             response = completion(**completion_kwargs)
 
-            # Track cost and request count even for invalid responses
-            cost = completion_cost(completion_response=response)
-            self.total_cost += cost
+            # A successful response counts even if its cost is unavailable.
             self.request_count += 1
+            try:
+                cost = completion_cost(completion_response=response)
+            except Exception:
+                if self.cost_known:
+                    logger.warning(
+                        "Cost tracking unavailable for this model "
+                        "(unknown to LiteLLM price table); showing n/a"
+                    )
+                self.cost_known = False
+            else:
+                self.total_cost += cost
 
             # Check for empty response
             response_text = response.choices[0].message.content
@@ -451,7 +465,6 @@ Start your output by repeating the context lines exactly, then add new transcrip
                 messages,
                 max_tokens=16000,  # Generous limit for transcription
                 temperature=0.1,  # Low temperature for consistent transcription
-                reasoning_effort="low",
             )
             
             # Log LLM response in verbose mode
@@ -505,7 +518,6 @@ Start your output by repeating the context lines exactly, then add new transcrip
                 test_messages,
                 max_tokens=10,
                 temperature=0,
-                reasoning_effort="low",
             ).strip()
             logger.debug(f"Test LLM Response: {response_text}")
             logger.info(f"Connection test successful: {response_text}")
@@ -517,5 +529,8 @@ Start your output by repeating the context lines exactly, then add new transcrip
     
     def print_cost_summary(self) -> None:
         """Print a summary of the total cost and request count."""
-        print(f"Total cost: ${self.total_cost:.6f}")
+        if self.cost_known:
+            print(f"Total cost: ${self.total_cost:.6f}")
+        else:
+            print("Total cost: n/a")
         print(f"Total requests: {self.request_count}")
