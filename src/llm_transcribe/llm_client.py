@@ -19,8 +19,15 @@ logger = logging.getLogger(__name__)
 class LLMClient:
     """Client for interacting with LLMs via LiteLLM."""
     
-    def __init__(self, model: str = "gemini-2.5-flash"):
+    def __init__(
+        self,
+        model: str = "gemini-2.5-flash",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
         self.model = model
+        self.api_base = api_base
+        self.api_key = api_key
         self.total_cost = 0.0
         self.request_count = 0
         
@@ -119,6 +126,13 @@ Your output should be:
 
 If you are provided with context from a previous chunk, use it to maintain speaker consistency and conversation flow."""
     
+    @property
+    def effective_model(self) -> str:
+        """Return the LiteLLM model name for the configured endpoint."""
+        if self.api_base is not None and "/" not in self.model and ":" not in self.model:
+            return f"openai/{self.model}"
+        return self.model
+
     def encode_audio_to_base64(self, audio_bytes: bytes) -> str:
         """Encode audio bytes to base64 string.
         
@@ -241,11 +255,16 @@ Start your output by repeating the context lines exactly, then add new transcrip
         """
         @stamina.retry(on=self.retryable_exceptions + (ValueError,), attempts=3, wait_initial=1.0, wait_max=10.0)
         def _call_llm():
-            response = completion(
-                model=self.model,
-                messages=messages,
-                **kwargs
-            )
+            completion_kwargs = {
+                "model": self.effective_model,
+                "messages": messages,
+                **kwargs,
+            }
+            if self.api_base is not None:
+                completion_kwargs["api_base"] = self.api_base
+            if self.api_key is not None:
+                completion_kwargs["api_key"] = self.api_key
+            response = completion(**completion_kwargs)
 
             # Track cost and request count even for invalid responses
             cost = completion_cost(completion_response=response)
