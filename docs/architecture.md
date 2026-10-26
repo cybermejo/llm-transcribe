@@ -21,6 +21,23 @@ LLM Transcribe is a Python CLI tool that transcribes audio files using Large Lan
   - Display help and usage information with Typer's auto-generation
   - Progress bars and user-friendly output
 
+### Provider configuration
+
+- **Responsibility**: Resolve custom endpoint settings from CLI options, environment variables, and named TOML profiles.
+- **Profile location**: `~/.config/llm-transcribe/providers.toml`; `XDG_CONFIG_HOME` changes the base directory to `$XDG_CONFIG_HOME/llm-transcribe/providers.toml`, and `LLM_TRANSCRIBE_PROVIDERS_FILE` can set an explicit file path.
+- **Profile schema**:
+  ```toml
+  [providers.rdsec]
+  api_base = "https://api.rdsec.trendmicro.com/prod/aiendpoint/v1"
+  # api_key = "YOUR_KEY" # optional; takes precedence over key_env
+  key_env = "RDSEC_API_KEY"
+  default_model = "gemini-3.5-transcribe"
+  ```
+  `api_key` may be set instead of `key_env`; if both are present, `api_key` wins. For each setting, CLI flag > environment variable > profile. Profile `default_model` is used only when `--model` is not given.
+- **Resolution and request flow**: `providers.py` loads and resolves profile, CLI, and environment values; the CLI passes the resolved settings to the transcription engine; the engine creates the `LLMClient`; and `LLMClient` calls LiteLLM. For a custom `api_base`, it adds the `openai/` prefix to bare model names that contain neither `/` nor `:`. Model names that already have a provider prefix are passed through unchanged.
+- **Reasoning effort**: `--reasoning-effort` (or `LLM_TRANSCRIBE_REASONING_EFFORT`) is sent to LiteLLM only when set. The client does not force a reasoning-effort value, so models that reject that parameter are not sent one by default.
+- **Cost guard**: If LiteLLM cannot look up a model's price, the client records the request, reports total cost as `n/a`, and logs one warning. It does not fail the transcription because the price is unknown.
+
 ### 2. Data Models (`models.py`)
 - **Responsibility**: Pydantic models for all data structures
 - **Key Models**:

@@ -38,6 +38,51 @@ llm-transcribe -c "Meeting between John and Kate about Q3 revenue projections" a
 llm-transcribe --help
 ```
 
+## Custom providers and models
+
+Use `--api-base` and `--api-key` to send requests to an OpenAI-compatible endpoint:
+
+```sh
+llm-transcribe audio.wav -m gemini-3.5-transcribe --api-base https://api.rdsec.trendmicro.com/prod/aiendpoint/v1 --api-key YOUR_KEY
+```
+
+You can also save endpoint settings as a named profile in
+`~/.config/llm-transcribe/providers.toml`:
+
+```toml
+[providers.rdsec]
+api_base = "https://api.rdsec.trendmicro.com/prod/aiendpoint/v1"
+# api_key = "YOUR_KEY" # optional; if set, this takes precedence over key_env
+key_env = "RDSEC_API_KEY"
+default_model = "gemini-3.5-transcribe"
+```
+
+Set `RDSEC_API_KEY` in your environment, then select the profile. The profile's `default_model` is used because this command omits `-m`:
+
+```sh
+export RDSEC_API_KEY=your_api_key_here
+llm-transcribe audio.wav --provider rdsec
+```
+
+A profile may use `api_key` instead of `key_env`, or include both. If both are set, `api_key` takes precedence. For each setting, CLI flag > environment variable > profile.
+
+| Environment variable | Purpose |
+| --- | --- |
+| `LLM_TRANSCRIBE_API_BASE` | API base used when `--api-base` is not set |
+| `LLM_TRANSCRIBE_API_KEY` | API key used when `--api-key` is not set |
+| `LLM_TRANSCRIBE_REASONING_EFFORT` | Reasoning effort used when `--reasoning-effort` is not set |
+| `LLM_TRANSCRIBE_PROVIDERS_FILE` | Path to the provider profiles TOML file; otherwise the tool uses `~/.config/llm-transcribe/providers.toml`, or `$XDG_CONFIG_HOME/llm-transcribe/providers.toml` when `XDG_CONFIG_HOME` is set |
+
+Use `--test` to check connectivity, authentication, and model access without transcribing audio:
+
+```sh
+llm-transcribe audio.wav --provider rdsec --test
+```
+
+The audio path is still required and must point to an existing file; the check itself sends a text-only request. For RDSec, verify that the model accepts audio separately by running a real transcription.
+
+Models missing from LiteLLM's price table show `n/a` in the cost summary. Request counts are still reported.
+
 ## How it Works
 
 1. **Audio Processing**: Audio file is split into 10-minute chunks with 1-minute overlap using a sliding-window approach.
