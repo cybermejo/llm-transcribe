@@ -1,7 +1,8 @@
 """Command line interface for llm-transcribe."""
 
 import logging
-import sys
+import os
+import tomllib
 from pathlib import Path
 from typing import Optional
 
@@ -20,10 +21,43 @@ from rich.prompt import Confirm
 
 from .models import Config
 from .output import OutputHandler
+from .providers import resolve_provider
 from .transcriber import TranscriptionEngine
 
 # Create console for rich output
 console = Console()
+
+
+class _CredentialRedactionFilter(logging.Filter):
+    """Redact credentials from log records before handlers emit them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.secrets: tuple[str, ...] = ()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+            if record.exc_info:
+                formatter = self.formatter or logging.Formatter()
+                message = "\n".join(
+                    (message, formatter.formatException(record.exc_info))
+                )
+                record.exc_info = None
+                record.exc_text = None
+            for secret in self.secrets:
+                message = message.replace(secret, "[redacted]")
+            record.msg = message
+            record.args = ()
+        except Exception:
+            record.msg = "Sensitive log message suppressed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
+_credential_redaction_filter = _CredentialRedactionFilter()
 
 # Create Typer app
 app = typer.Typer(
@@ -42,11 +76,13 @@ def setup_logging(verbose: bool = False):
     log_level = logging.DEBUG if verbose else logging.INFO
     
     # Configure logging
+    handler = RichHandler(console=console, show_path=False)
+    handler.addFilter(_credential_redaction_filter)
     logging.basicConfig(
         level=log_level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(console=console, show_path=False)]
+        handlers=[handler],
     )
     
     # Prevent LiteLLM from logging sensitive audio data in verbose mode
@@ -66,6 +102,17 @@ def progress_callback(current: int, total: int, message: str):
     pass
 
 
+def _safe_error_message(
+    error: Exception, api_key: str | None, api_base: str | None
+) -> str:
+    """Hide provider credentials and endpoint details from user-facing errors."""
+    message = str(error)
+    for secret in (api_key, api_base):
+        if secret:
+            message = message.replace(secret, "[redacted]")
+    return message
+
+
 @app.command()
 def main(
     audio_file: Path = typer.Argument(
@@ -76,10 +123,33 @@ def main(
         dir_okay=False,
         readable=True,
     ),
-    model: str = typer.Option(
-        "gemini-2.5-flash",
+    model: Optional[str] = typer.Option(
+        None,
         "-m", "--model",
         help="LLM model to use for transcription"
+    ),
+    api_base: Optional[str] = typer.Option(
+        None,
+        "--api-base",
+        envvar="LLM_TRANSCRIBE_API_BASE",
+        help="OpenAI-compatible API base URL",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        "--api-key",
+        envvar="LLM_TRANSCRIBE_API_KEY",
+        help="API key for the selected provider",
+    ),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        help="Named provider profile from providers.toml",
+    ),
+    reasoning_effort: Optional[str] = typer.Option(
+        None,
+        "--reasoning-effort",
+        envvar="LLM_TRANSCRIBE_REASONING_EFFORT",
+        help="Reasoning effort passed to the model (for example: low, medium, high)",
     ),
     output: Optional[Path] = typer.Option(
         None,
@@ -137,7 +207,42 @@ def main(
     
     # Setup logging
     setup_logging(verbose)
-    
+
+    # Resolve profile and environment settings before selecting the model.
+    try:
+        resolved = resolve_provider(provider, api_base, api_key)
+    except tomllib.TOMLDecodeError:
+        profile_path = os.environ.get("LLM_TRANSCRIBE_PROVIDERS_FILE")
+        if profile_path is None and os.environ.get("XDG_CONFIG_HOME"):
+            profile_path = str(
+                Path(os.environ["XDG_CONFIG_HOME"])
+                / "llm-transcribe"
+                / "providers.toml"
+            )
+        filename = profile_path or str(
+            Path.home() / ".config" / "llm-transcribe" / "providers.toml"
+        )
+        console.print(f"[red]Error:[/red] Invalid provider TOML in {filename}")
+        raise typer.Exit(1)
+    except ValueError as e:
+        message = _safe_error_message(
+            e,
+            api_key or os.environ.get("LLM_TRANSCRIBE_API_KEY"),
+            api_base or os.environ.get("LLM_TRANSCRIBE_API_BASE"),
+        )
+        console.print(f"[red]Error:[/red] {message}")
+        raise typer.Exit(1)
+
+    model = model or resolved.model or "gemini-2.5-flash"
+    config.api_base = resolved.api_base
+    config.api_key = resolved.api_key
+    config.provider = provider
+    config.reasoning_effort = reasoning_effort
+    _credential_redaction_filter.secrets = tuple(
+        secret for secret in (resolved.api_key, resolved.api_base) if secret
+    )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_credential_redaction_filter)
     # Update config with command line options
     config.chunk_duration_minutes = chunk_duration
     config.overlap_duration_minutes = overlap_duration
@@ -162,6 +267,8 @@ def main(
     console.print(f"[blue]Input:[/blue] {audio_file}")
     console.print(f"[blue]Output:[/blue] {output}")
     console.print(f"[blue]Model:[/blue] {model}")
+    console.print(f"[blue]Provider:[/blue] {provider or 'direct'}")
+    console.print(f"[blue]API Base:[/blue] {'custom' if resolved.api_base else 'default'}")
     console.print(f"[blue]Chunk Duration:[/blue] {chunk_duration} minutes")
     console.print(f"[blue]Overlap Duration:[/blue] {overlap_duration} minutes")
     console.print(f"[blue]Export Formats:[/blue] {', '.join(export_format_list)}")
@@ -170,15 +277,28 @@ def main(
     
     # Create transcription engine
     try:
-        engine = TranscriptionEngine(config, model)
+        engine = TranscriptionEngine(
+            config,
+            model,
+            api_base=resolved.api_base,
+            api_key=resolved.api_key,
+            reasoning_effort=reasoning_effort,
+        )
     except Exception as e:
-        console.print(f"[red]Error creating transcription engine:[/red] {e}")
+        message = _safe_error_message(e, resolved.api_key, resolved.api_base)
+        console.print(f"[red]Error creating transcription engine:[/red] {message}")
         raise typer.Exit(1)
     
     # Test setup if requested
     if test:
         console.print("[yellow]Testing setup...[/yellow]")
-        if engine.test_setup():
+        try:
+            setup_passed = engine.test_setup()
+        except Exception as e:
+            message = _safe_error_message(e, resolved.api_key, resolved.api_base)
+            console.print(f"[red]Setup test failed:[/red] {message}")
+            raise typer.Exit(1)
+        if setup_passed:
             console.print("[green]Setup test passed![/green]")
             raise typer.Exit(0)
         else:
@@ -195,6 +315,7 @@ def main(
     try:
         console.print("[yellow]Preparing transcription job...[/yellow]")
         job = engine.create_job(audio_file, output, model, context)
+        job.provider_name = provider
         job = engine.prepare_job(job)
         
         console.print(f"[green]Job prepared:[/green] {len(job.chunks)} chunks to process")
@@ -205,7 +326,8 @@ def main(
         console.print(f"[blue]Estimated processing time:[/blue] {estimated_time:.0f} seconds")
         
     except Exception as e:
-        console.print(f"[red]Error preparing job:[/red] {e}")
+        message = _safe_error_message(e, resolved.api_key, resolved.api_base)
+        console.print(f"[red]Error preparing job:[/red] {message}")
         raise typer.Exit(1)
     
     # Process job with progress bar
@@ -234,7 +356,8 @@ def main(
         console.print("\n[yellow]Transcription interrupted by user.[/yellow]")
         raise typer.Exit(1)
     except Exception as e:
-        console.print(f"\n[red]Error during transcription:[/red] {e}")
+        message = _safe_error_message(e, resolved.api_key, resolved.api_base)
+        console.print(f"\n[red]Error during transcription:[/red] {message}")
         raise typer.Exit(1)
     
     # Export results
@@ -260,7 +383,8 @@ def main(
         engine.llm_client.print_cost_summary()
         
     except Exception as e:
-        console.print(f"[red]Error exporting results:[/red] {e}")
+        message = _safe_error_message(e, resolved.api_key, resolved.api_base)
+        console.print(f"[red]Error exporting results:[/red] {message}")
         raise typer.Exit(1)
 
 
