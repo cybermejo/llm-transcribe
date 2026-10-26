@@ -11,3 +11,11 @@ wheels/
 
 # Git worktrees
 .worktrees/
+
+# Local progress and design artifacts
+docs/superpowers/progress-status.md
+docs/superpowers/specs/
+docs/superpowers/plans/
+
+# macOS metadata
+.DS_Store
