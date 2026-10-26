@@ -15,11 +15,23 @@ logger = logging.getLogger(__name__)
 class TranscriptionEngine:
     """Core engine for orchestrating transcription process."""
     
-    def __init__(self, config: Config, model: str = "gemini-2.5-flash"):
+    def __init__(
+        self,
+        config: Config,
+        model: str = "gemini-2.5-flash",
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
+    ):
         self.config = config
         self.model = model
         self.audio_processor = AudioProcessor(config)
-        self.llm_client = LLMClient(model)
+        self.llm_client = LLMClient(
+            model,
+            api_base=api_base,
+            api_key=api_key,
+            reasoning_effort=reasoning_effort,
+        )
     
     def create_job(self, input_file: Path, output_file: Path, model: Optional[str] = None, context: Optional[str] = None) -> TranscriptionJob:
         """Create a new transcription job.

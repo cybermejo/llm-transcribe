@@ -15,6 +15,10 @@ class Config(BaseModel):
     chunk_duration_minutes: int = Field(default=10, description="Duration of each audio chunk in minutes")
     overlap_duration_minutes: int = Field(default=1, description="Overlap duration between chunks in minutes")
     default_model: str = Field(default="gemini-2.5-flash", description="Default LLM model to use")
+    api_base: str | None = Field(default=None)
+    api_key: str | None = Field(default=None)
+    provider: str | None = Field(default=None)
+    reasoning_effort: str | None = Field(default=None)
     supported_formats: List[str] = Field(
         default=["wav", "mp3", "m4a", "flac", "ogg", "aac"],
         description="Supported audio formats"
@@ -126,6 +130,7 @@ class TranscriptionJob(BaseModel):
     output_file: Path = Field(description="Output transcription file path")
     model: str = Field(description="LLM model to use")
     config: Config = Field(description="Configuration for this job")
+    provider_name: Optional[str] = Field(default=None, description="Provider name for display")
     context: Optional[str] = Field(default=None, description="Extra context about the meeting for better transcription")
     chunks: List[ChunkData] = Field(default_factory=list, description="Audio chunks")
     results: List[TranscriptionResult] = Field(default_factory=list, description="Transcription results")
